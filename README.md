@@ -2,7 +2,7 @@
 
 An interactive, offline web application that re-analyses and extends the AHP/ANP supplier selection model of:
 
-> Rodrigues, M., Šírová, E., & Mugurusi, G. (2022). *A supplier selection decision model using multi-criteria decision analysis in a small manufacturing company.* IFAC PapersOnLine, 55(10), 2773–2778. https://doi.org/10.1016/j.ifacol.2022.10.149
+> Rodrigues, M., Šírová, E., & Mugurusi, G. (2022). *A supplier selection decision model using multi-criteria decision analysis in a small manufacturing company.* IFAC PapersOnLine, 55(10), 2773-2778. https://doi.org/10.1016/j.ifacol.2022.10.149
 
 Built for the **Seminar course (ME496)**, Department of Mechanical Engineering, IIITDM Kurnool.
 Course instructors: Dr. S. Anand Kumar and Dr. Anuj Kumar. Author: Sujal Negi (123ME0023).
@@ -13,7 +13,7 @@ Course instructors: Dr. S. Anand Kumar and Dr. Anuj Kumar. Author: Sujal Negi (1
 
 1. [What the project does](#1-what-the-project-does)
 2. [Quick start](#2-quick-start)
-3. [The five tabs](#3-the-five-tabs)
+3. [The page](#3-the-page-one-simple-page-eight-steps)
 4. [Project structure](#4-project-structure)
 5. [How the calculations work](#5-how-the-calculations-work)
 6. [Data and where it comes from](#6-data-and-where-it-comes-from)
@@ -26,7 +26,7 @@ Course instructors: Dr. S. Anand Kumar and Dr. Anuj Kumar. Author: Sujal Negi (1
 
 ## 1. What the project does
 
-The paper chooses one of three suppliers of copper rods (a critical spare part) for a small Czech car-parts maker. Three managers (Maintenance, Production, Quality) compare six attributes on Saaty's 1–9 scale. The paper solves the problem twice:
+The paper chooses one of three suppliers of copper rods (a critical spare part) for a small Czech car-parts maker. Three managers (Maintenance, Production, Quality) compare six attributes on Saaty's 1-9 scale. The paper solves the problem twice:
 
 | Method | Winner | Scores (S1 / S2 / S3) |
 |---|---|---|
@@ -35,10 +35,10 @@ The paper chooses one of three suppliers of copper rods (a critical spare part) 
 
 This project:
 
-- **Rebuilds** both results from the paper's own tables (Tables 2–9) and matches them to 4 decimals.
+- **Rebuilds** both results from the paper's own tables (Tables 2-9) and matches them to 4 decimals.
 - **Shows** that the ANP result equals an ordinary AHP calculation with the two criteria weighted 1 : 5, so the change of winner comes from one judgment, not from the network method.
 - **Finds the tipping point**: the winner flips when the weight of Logistic-Economic crosses **0.442**.
-- **Adds four improvements**: sensitivity analysis, scoring with real numbers, a Monte Carlo robustness test, and a 24-month cost simulation of buying plans.
+- **Adds five improvements**: re-checking one answer in each inconsistent table, scoring with real numbers, the flip point, a 5,000-trial robustness test, and a 24-month cost of each buying plan.
 
 ## 2. Quick start
 
@@ -72,32 +72,40 @@ PORT=8090 node server.js         # macOS / Linux
 
 > Open the page through the server. Opening `index.html` directly from disk may not load correctly in some browsers.
 
-## 3. The five tabs
+## 3. The page: paper's model vs my model
 
-The switch at the top right, **Opinions (paper)** / **Real numbers**, changes how price, delivery time and quality are scored in every tab. **Reset** returns everything to the paper's values.
+The page has two columns separated by a thick line:
 
-| Tab | Type | What it shows | What you can change |
-|---|---|---|---|
-| **Paper's model** | From the paper | Supplier cards; paper result vs rebuilt result (AHP 1 : 1 and ANP 1 : 5); decision tree with live weights; all 8 pairwise tables with priorities and consistency ratio (CR) | Every pairwise judgment (slider per comparison) |
-| **Sensitivity** | New | Final score of each supplier as the Logistic-Economic weight moves from 0 to 1; flip point; one-attribute sensitivity table | Group weight slider; presets for paper AHP (0.50) and ANP (0.17) |
-| **Real numbers** | New | Editable measured values; attribute scores from opinions vs from real numbers; final scores both ways | Price, delivery days, defect rate per supplier |
-| **Robustness** | New | Share of trials each supplier wins; finishing positions (1st / 2nd / 3rd); histogram of the S1 − S2 score gap | Judgment uncertainty (0, ±1, ±2 steps), weight range, number of trials |
-| **2-year outlook** | New | Ranking for a chosen priority (cost / quality / speed); tipping points; month-by-month cost of four buying plans with an 80% band; totals per plan | Priority sliders and presets; split share S1/S2; all planning assumptions |
+- **Left (grey): Paper's model.** The paper's 8 answer tables exactly as published, all six attributes scored from opinions.
+- **Right (green): My model.** The same inputs with two changes: (1) one doubtful answer re-checked (moved one step) in each table above 5% CR, (2) price, delivery time and part quality scored from real numbers.
+
+Each row compares the same thing on both sides, with the working shown:
+
+| Row | What it shows |
+|---|---|
+| 1 Input answers | The 8 tables (left editable, right follows; re-checked cells in green), CR of each, and the full eigenvector/CR working of one chosen table |
+| 2 Attribute scores | Score of each supplier on each attribute and where it comes from (opinion or real numbers); measured values (editable) |
+| 3 Final score | Global weight × score for every attribute; left matches paper Table 10 (w = 0.5) and Table 11 (w = 1/6) |
+| 4 Flip point | Exact w at which Supplier 1 and Supplier 2 swap |
+| 5 How sure | 5,000 random trials for each model |
+| 6 Two-year cost | Only on the right: expected cost of each buying plan (inputs editable) |
+| Why my model is better | Point-by-point comparison of both columns |
+
+The group weight w (top bar) applies to both columns. **Reset to paper values** restores everything.
 
 ## 4. Project structure
 
 ```
 supplier-decision-lab/
-├── index.html              Page layout: top bar, 5 tabs, all sections
-├── css/style.css           Styles (large type for projector use)
+├── index.html              Page layout: summary and steps 1 to 8
+├── css/style.css           Plain styles, large text
 ├── js/
 │   ├── data.js             Every input number, with its source (paper / estimate / market)
 │   ├── ahp.js              AHP maths: priorities, CR, scores, flip points, sensitivity, Monte Carlo
-│   ├── sim.js              24-month cost simulation and break-even calculations
-│   └── app.js              Screens, charts and controls (one shared state object)
+│   ├── sim.js              Two-year expected cost and break-even calculations
+│   └── app.js              The two-column page: paper's model vs my model
 ├── assets/
 │   ├── vendor/chart.umd.js Chart.js 4.4.1 (MIT licence, bundled for offline use)
-│   └── fonts/              IBM Plex Sans / Mono, Archivo (bundled)
 ├── server.js               Zero-dependency Node.js static server (port 8080)
 ├── start.bat / start.sh    Start scripts (Node, falling back to Python)
 └── docs/                   Seminar report, presentation and data workbook
@@ -117,7 +125,7 @@ For a reciprocal matrix *A* (where *a<sub>ji</sub> = 1 / a<sub>ij</sub>*), the w
 CI = (λmax − n) / (n − 1)        CR = CI / RI        RI = 0.52 for n = 3
 ```
 
-RI = 0.52 is the value used by the SuperDecisions software. With it, the program reproduces every inconsistency percentage printed in the paper (8.25%, 5.16%, 3.70%, 6.24%, 0.00%, 5.16%, 0.89%, 3.70%). The UI marks CR ≤ 5% green (Saaty's limit for three items), 5–10% amber and above 10% red.
+RI = 0.52 is the value used by the SuperDecisions software. With it, the program reproduces every inconsistency percentage printed in the paper (8.25%, 5.16%, 3.70%, 6.24%, 0.00%, 5.16%, 0.89%, 3.70%). The page marks CR ≤ 5% green (Saaty's limit for three items) and above 5% red.
 
 ### 5.3 Final score
 
@@ -160,33 +168,39 @@ This keeps the real ratios: a supplier 1.5 times dearer gets a price score 1.5 t
 In each trial (default 5,000, seeded random generator, seed 7):
 
 1. Every judgment moves by −1, 0 or +1 step on the Saaty scale (or ±2, or none).
-2. *w* is drawn uniformly from the chosen range (default 0.1–0.9).
+2. *w* is drawn uniformly from the chosen range (default 0.1-0.9).
 3. In real-number mode, every measured value varies by up to ±5%.
 4. All scores are recomputed and the finishing positions are counted.
 
 A supplier counts as a reliable winner if it wins at least 80% of trials.
 
-### 5.8 Two-year cost simulation (`sim.js → simulate`)
+### 5.8 Re-checking doubtful answers (`app.js → fixTable`), my model only
 
-Each month *t* (24 months, 400 runs per plan, seeds 100–103):
+For every table with CR above 5%, each single answer is moved one step on the Saaty scale (both directions), and the change giving the lowest CR is kept. This is repeated (at most 3 times) until CR ≤ 5%. With the paper's tables one change per table is enough:
 
-| Quantity | Model |
+| Table | Answer | Change | CR |
+|---|---|---|---|
+| T2 | Price vs Availability | 1/3 → 1/2 | 8.25% → 2.36% |
+| T3 | Aftersales vs Sustainability | 2 → 1 | 5.16% → 0.00% |
+| T5 | Part quality: S1 vs S2 | 3 → 2 | 6.24% → 1.36% |
+| T7 | Aftersales: S2 vs S3 | 2 → 1 | 5.16% → 0.00% |
+
+### 5.9 Two-year expected cost (`sim.js → expectedCost`), my model only
+
+For each month *t* of 24:
+
+| Quantity | Formula |
 |---|---|
-| Rods needed | Poisson(R / 12), shared between suppliers by the plan |
-| Bad rods | Binomial(rods from supplier, defect rate *d<sub>i</sub>(t)*), *d<sub>i</sub>(t) = d<sub>i,2018</sub> + g·t/12* |
-| Urgent needs | Poisson(U / 12) |
-| Line stop | Each bad rod or urgent need: with probability *q* the shelf is empty and the line stops for the supplier's lead time × *h* hours per day |
-| Price | *P<sub>i</sub>(t) = P<sub>i</sub> · (1 + r)<sup>t/12</sup>* |
+| Rods bought | R / 12 per month |
+| Price | *P<sub>i</sub> · (1 + r)<sup>t/12</sup>* |
+| Bad rods | rods × *d<sub>i</sub>(t)*, with *d<sub>i</sub>(t) = d<sub>i,2018</sub> + g·t/12* |
+| Line-stop hours | (bad rods + urgent needs) × *q* × delivery days × *h* |
 
 ```
 Cost = rods × price  +  bad rods × c_b  +  stop hours × c
 ```
 
-The chart shows the mean and the 10th–90th percentile band. `expectedCost` computes the same model without randomness to give exact tipping points:
-
-- the bad-rod cost at which S1 and S2 cost the same
-- the price S1 must reach to match S2
-- the extra line-stop hours of S1 over S2
+A 50/50 split is the average of the S1 and S2 plans. From the same model the page gives the bad-rod cost at which S1 and S2 cost the same (about €5,250).
 
 ## 6. Data and where it comes from
 
@@ -194,11 +208,11 @@ Every number lives in `js/data.js` with a source tag.
 
 | Data | Value | Source |
 |---|---|---|
-| Pairwise judgments (8 matrices) | Tables 2–9 | Paper |
-| AHP / ANP final scores | Tables 10–11 | Paper |
-| Price range | €230–350 | Paper, Section 3 |
-| Delivery time range | 3–7 days | Paper, Section 3 |
-| Defect range 2017 / 2018 | 5–13.33% / 6.67–15% | Paper, Section 3 |
+| Pairwise judgments (8 matrices) | Tables 2-9 | Paper |
+| AHP / ANP final scores | Tables 10-11 | Paper |
+| Price range | €230-350 | Paper, Section 3 |
+| Delivery time range | 3-7 days | Paper, Section 3 |
+| Defect range 2017 / 2018 | 5-13.33% / 6.67-15% | Paper, Section 3 |
 | Yearly spend | €25,285 (2017), €25,480 (2018) | Paper, Section 3 |
 | Per-supplier price, days, defects | 350/230/235 €, 7/3/5 days, 6.67/10/15 % | **Estimate** inside the paper's ranges, following its rankings |
 | Rods per year, *R* | 90 | Derived: yearly spend / average price |
@@ -210,7 +224,7 @@ Every number lives in `js/data.js` with a source tag.
 | Hours lost per waiting day, *h* | 8 | Estimate (one shift) |
 | Line-stop cost per hour, *c* | €300 | Estimate |
 
-All estimates can be edited in the UI (Real numbers tab, and Planning assumptions on the 2-year outlook tab).
+All estimates can be edited on the page (rows 2 and 6, right column).
 
 ## 7. Key results
 
@@ -221,8 +235,10 @@ All estimates can be edited in the UI (Real numbers tab, and Planning assumption
 | Flip point S1 ↔ S2 (opinions / real numbers) | 0.442 / 0.472 |
 | Matrices above Saaty's 5% CR limit | 4 of 8 (Tables 2, 3, 5, 7) |
 | Robustness, 5,000 trials (opinions) | S1 41.9%, S2 58.1%, S3 0% |
-| Robustness, 5,000 trials (real numbers) | S1 46.0%, S2 54.0%, S3 0% |
-| 24-month cost: only S1 / only S2 / only S3 / split 50-50 | €86,426 / €56,120 / €72,321 / €72,361 |
+| Consistency after re-checking one answer per table | 8 of 8 tables within 5% |
+| My model, w = 0.5 (S1 / S2 / S3) | 0.367 / 0.374 / 0.259, flip at 0.486 |
+| Robustness, 5,000 trials (my model) | S1 47.5%, S2 52.5%, S3 0% |
+| 24-month expected cost: only S1 / only S2 / only S3 / split 50-50 | €87,500 / €56,928 / €71,553 / €72,214 |
 | Bad-rod cost at which S1 pays off | > €5,250 per rod |
 | Price S1 must reach to match S2 | ≈ €188 per rod (now €350) |
 
@@ -232,9 +248,8 @@ All estimates can be edited in the UI (Real numbers tab, and Planning assumption
 
 | File | Contents |
 |---|---|
-| `docs/Seminar_Report.pdf` | Full seminar report: review, re-analysis, proposed model, results, references |
-| `docs/Seminar_Presentation.pdf` | 8-slide seminar presentation |
-| `docs/Seminar_Data_and_Charts.xlsx` *(if present)* | Every table and chart of the report, with sources (sheets T1–T8) |
+| `docs/Seminar_Report.pdf` | Full seminar report: review, gaps, proposed model, results, references |
+| `docs/Seminar_Presentation.pdf` | 7-slide seminar presentation |
 
 ## 9. Limitations
 
@@ -245,8 +260,8 @@ All estimates can be edited in the UI (Real numbers tab, and Planning assumption
 
 ## 10. References
 
-1. Rodrigues, M., Šírová, E., & Mugurusi, G. (2022). A supplier selection decision model using multi-criteria decision analysis in a small manufacturing company. *IFAC PapersOnLine*, 55(10), 2773–2778.
+1. Rodrigues, M., Šírová, E., & Mugurusi, G. (2022). A supplier selection decision model using multi-criteria decision analysis in a small manufacturing company. *IFAC PapersOnLine*, 55(10), 2773-2778.
 2. Saaty, T. L. (1980). *The Analytic Hierarchy Process*. McGraw-Hill.
 3. Saaty, T. L. (2005). *Theory and Applications of the Analytic Network Process*. RWS Publications.
-4. Alegoz, M., & Yapicioglu, H. (2019). Supplier selection and order allocation decisions under quantity discount and fast service options. *Sustainable Production and Consumption*, 18, 179–189.
+4. Alegoz, M., & Yapicioglu, H. (2019). Supplier selection and order allocation decisions under quantity discount and fast service options. *Sustainable Production and Consumption*, 18, 179-189.
 5. Chart.js 4.4.1, MIT licence. https://www.chartjs.org

@@ -55,7 +55,7 @@ SDL.ATTR_ORDER = ["DeliveryTime", "Price", "Availability", "Aftersales", "Qualit
 SDL.PAPER_JUDGMENTS = {
   C1: { title: "Inside Logistic-Economic (Table 2)", items: ["Delivery time", "Price", "Availability"],
         m: [[1, 5, 4], [1/5, 1, 1/3], [1/4, 3, 1]], paperInconsistency: 8.25 },
-  C2: { title: "Inside Quality-Sustainability (Table 3)", items: ["Aftersales", "Quality", "Sustainability"],
+  C2: { title: "Inside Quality-Sustainability (Table 3)", items: ["Aftersales", "Quality", "Sustain."],
         m: [[1, 1/3, 2], [3, 1, 3], [1/2, 1/3, 1]], paperInconsistency: 5.16 },
   DeliveryTime:   { title: "Suppliers on delivery time (Table 4)", items: ["S1", "S2", "S3"],
         m: [[1, 1/5, 1/3], [5, 1, 3], [3, 1/3, 1]], paperInconsistency: 3.70 },

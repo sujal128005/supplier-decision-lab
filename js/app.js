@@ -1,396 +1,326 @@
 /*
  * app.js
- * Screens, charts and controls of the Supplier Decision Lab.
- * One shared state object; every control changes the state and redraws the open tab.
+ * Two columns with the same inputs:
+ *   LEFT  = paper's model: the paper's answers (Tables 2-9), all six attributes from opinions.
+ *   RIGHT = my model: the same answers with one doubtful answer re-checked in each table above
+ *           CR 5%, and price, delivery time and part quality scored from measured numbers.
+ * Every step shows its working so each number can be checked by hand.
  */
 (function (S) {
-  "use strict";
-
-  const COLORS = { s: ["#c0632c", "#2b6f9e", "#7d8a93"], ink: "#1b2327", muted: "#56636a", ok: "#2e7d4f", warn: "#a86b12", bad: "#b23b3b" };
-  const NAMES = ["Supplier 1", "Supplier 2", "Supplier 3"];
-  const SHORT_ATTR = { DeliveryTime: "Delivery", Price: "Price", Availability: "Avail.", Aftersales: "Aftersales", Quality: "Quality", Sustainability: "Sustain." };
-
-  const deep = o => JSON.parse(JSON.stringify(o));
-  const state = {
-    J: S.copyJudgments(S.PAPER_JUDGMENTS), mode: "paper", measured: deep(S.MEASURED_DEFAULT),
-    wC1: 0.5, prio: [4, 4, 4], split: 50, plan: deep(S.PLAN_DEFAULT),
-    mc: { steps: 1, range: [0.1, 0.9], runs: 5000 }
-  };
-
   const $ = id => document.getElementById(id);
-  const fmt = (x, d = 3) => x.toFixed(d);
-  const pct = (x, d = 0) => (x * 100).toFixed(d) + "%";
-  const eur = x => "€" + Math.round(x).toLocaleString("en-US");
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const f3 = x => x.toFixed(3), f4 = x => x.toFixed(4);
+  const pc = x => (x * 100).toFixed(1) + "%", pc2 = x => (x * 100).toFixed(2) + "%";
+  const eur = x => "€" + Math.round(x).toLocaleString("en-GB");
+  const SUP = ["Supplier 1", "Supplier 2", "Supplier 3"], SS = ["S1", "S2", "S3"];
+  const COL = ["#1f5fa8", "#d9822b", "#6b7280"];
+  const LIMIT = 0.05, KEYS = () => Object.keys(J);
+  const TNO = { C1: "T2", C2: "T3", DeliveryTime: "T4", Quality: "T5", Availability: "T6", Aftersales: "T7", Price: "T8", Sustainability: "T9" };
+  const REAL = { Price: "price", DeliveryTime: "leadDays", Quality: "defect2018" };
 
-  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
-  Chart.defaults.font.size = 14;
-  Chart.defaults.color = COLORS.muted;
-  Chart.defaults.borderColor = "#e4e7e6";
-  Chart.defaults.plugins.legend.display = false;
-  Chart.defaults.maintainAspectRatio = false;
-  Chart.defaults.animation.duration = 250;
-  const axisTitle = text => ({ display: true, text, color: COLORS.ink, font: { size: 15, weight: 600 } });
-  const legendBottom = extra => ({ display: true, position: "bottom", labels: Object.assign({ boxWidth: 14, font: { size: 15 }, color: COLORS.ink, padding: 14 }, extra || {}) });
+  let J, meas, plan, w, mc = null;
+  function resetAll() { J = S.copyJudgments(S.PAPER_JUDGMENTS); meas = clone(S.MEASURED_DEFAULT); plan = clone(S.PLAN_DEFAULT); w = 0.5; }
+  function frac(v) { if (Math.abs(v - 1) < 1e-9) return "1"; return v > 1 ? String(Math.round(v)) : "1/" + Math.round(1 / v); }
 
-  /* shaded x-ranges and vertical marker lines on a linear-x chart */
-  Chart.register({
-    id: "markers",
-    beforeDatasetsDraw(chart, _a, opts) {
-      const { ctx, chartArea: a, scales: { x } } = chart;
-      (opts.bands || []).forEach(b => {
-        ctx.save(); ctx.fillStyle = b.color;
-        ctx.fillRect(x.getPixelForValue(b.from), a.top, x.getPixelForValue(b.to) - x.getPixelForValue(b.from), a.bottom - a.top);
-        ctx.restore();
-      });
-    },
-    afterDatasetsDraw(chart, _a, opts) {
-      const { ctx, chartArea: a, scales: { x } } = chart;
-      (opts.lines || []).forEach(l => {
-        const px = x.getPixelForValue(l.x);
-        ctx.save(); ctx.strokeStyle = l.color; ctx.lineWidth = l.width || 1.2; ctx.setLineDash(l.dash || []);
-        ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
-        if (l.label) {
-          ctx.setLineDash([]); ctx.font = "600 14px " + Chart.defaults.font.family; ctx.fillStyle = l.color;
-          const w = ctx.measureText(l.label).width;
-          const tx = l.left ? px - w - 6 : px + 5;
-          ctx.fillText(l.label, Math.min(Math.max(tx, a.left + 2), a.right - w - 2), a.top + 16 + (l.row || 0) * 18);
+  /* My model, change 1: in a table above CR 5%, try every one-step change of one answer and keep the
+     one with the lowest CR; repeat (at most 3 times) until CR <= 5%. */
+  function fixTable(M) {
+    let A = M.map(r => r.slice()); const changes = [];
+    for (let round = 0; round < 3 && S.priorities(A).cr > LIMIT + 1e-9; round++) {
+      let best = null;
+      for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+        const s = S.nearestStep(A[i][j]);
+        for (const d of [-1, 1]) {
+          const k = s + d; if (k < 0 || k >= S.SAATY_VALUES.length) continue;
+          const B = A.map(r => r.slice()); B[i][j] = S.SAATY_VALUES[k]; B[j][i] = 1 / S.SAATY_VALUES[k];
+          const cr = S.priorities(B).cr;
+          if (!best || cr < best.cr - 1e-12) best = { i, j, from: A[i][j], to: B[i][j], cr, B };
         }
-        ctx.restore();
-      });
+      }
+      changes.push(best); A = best.B;
     }
-  });
+    return { A, changes };
+  }
+  function fixedJ() { const F = S.copyJudgments(J); for (const k in F) F[k].m = fixTable(J[k].m).A; return F; }
+
+  /* The two sides. */
+  function side(s, ww) {
+    const isR = s === "R";
+    return { J: isR ? fixedJ() : J, mode: isR ? "measured" : "paper", measured: meas, wC1: ww === undefined ? w : ww };
+  }
+  const winner = sc => S.rankOf(sc)[0];
 
   const charts = {};
-  function chart(id, config) {
-    if (charts[id]) { charts[id].data = config.data; charts[id].options = config.options; charts[id].update(); return; }
-    charts[id] = new Chart($(id), config);
+  function chart(id, cfg) {
+    if (charts[id]) charts[id].destroy();
+    cfg.options = Object.assign({ responsive: true, maintainAspectRatio: false, animation: false }, cfg.options || {});
+    charts[id] = new Chart($(id), cfg);
   }
-  function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
-  const hatchCache = {};
-  function hatch(color) {
-    if (hatchCache[color]) return hatchCache[color];
-    const c = document.createElement("canvas"); c.width = c.height = 8;
-    const x = c.getContext("2d");
-    x.fillStyle = hexA(color, 0.18); x.fillRect(0, 0, 8, 8);
-    x.strokeStyle = color; x.lineWidth = 1.6; x.beginPath(); x.moveTo(0, 8); x.lineTo(8, 0); x.moveTo(-2, 2); x.lineTo(2, -2); x.moveTo(6, 10); x.lineTo(10, 6); x.stroke();
-    return (hatchCache[color] = x.createPattern(c, "repeat"));
-  }
+  Chart.defaults.font.size = 14; Chart.defaults.color = "#222";
 
-  /* ================================================================ PAPER'S MODEL */
-  function renderSuppliers() {
-    const m = state.measured;
-    $("supplierCards").innerHTML = S.SUPPLIERS.map((s, i) => `
-      <div class="card sup-card" style="--c:${COLORS.s[i]}">
-        <div class="sc-top"><span class="sc-name">${s.name}</span><span class="sc-place">${s.place.replace("Czech Republic, ", "Czech, ")}</span></div>
-        <dl>
-          <dt>Price per rod</dt><dd>${eur(m.price[i])}</dd>
-          <dt>Delivery time</dt><dd>${m.leadDays[i]} days</dd>
-          <dt>Bad parts (2018)</dt><dd>${m.defect2018[i].toFixed(2)}%</dd>
-        </dl>
-      </div>`).join("");
-  }
-
-  function renderRepro() {
-    const ps = { J: state.J, mode: "paper", measured: state.measured };
-    const ahp = S.evaluate(ps, 0.5).total, anp = S.evaluate(ps, 1 / 6).total, P = S.PAPER_RESULTS;
-    const close = (a, b) => a.every((x, i) => Math.abs(x - b[i]) < 5e-4);
-    const row = (label, arr, tag) => `<tr class="${tag ? "match" : ""}"><td>${label}${tag ? ' <span class="pill ok">match</span>' : ""}</td>${arr.map(x => `<td class="n">${fmt(x, 4)}</td>`).join("")}<td><span class="dot s${S.rankOf(arr)[0] + 1}"></span>S${S.rankOf(arr)[0] + 1}</td></tr>`;
-    $("reproTable").innerHTML = `<thead><tr><th>Method</th><th class="n">S1</th><th class="n">S2</th><th class="n">S3</th><th>Winner</th></tr></thead><tbody>
-      ${row("Paper AHP", P.AHP)}${row("Rebuilt, 1 : 1", ahp, close(ahp, P.AHP))}
-      ${row("Paper ANP", P.ANP)}${row("Rebuilt, 1 : 5", anp, close(anp, P.ANP))}</tbody>`;
-  }
-
-  function renderTree() {
-    const ev = S.evaluate(state);
-    const w1 = S.priorities(state.J.C1.m).p, w2 = S.priorities(state.J.C2.m).p;
-    const W = 660, H = 360;
-    const xs = [60, 170, 280, 380, 490, 600], gx = [170, 490], sx = [130, 330, 530];
-    const line = (x1, y1, x2, y2, c, o) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c || "#b4bcb9"}" stroke-width="1.3" opacity="${o || 1}"/>`;
-    const box = (x, y, w, h, t, sub, fill, stroke, sw) => `<rect x="${x - w / 2}" y="${y}" width="${w}" height="${h}" rx="7" fill="${fill}" stroke="${stroke}" stroke-width="${sw || 1.3}"/>
-      <text x="${x}" y="${y + (sub ? 20 : h / 2 + 6)}" text-anchor="middle" font-size="15" font-weight="600" fill="#1b2327">${t}</text>
-      ${sub ? `<text x="${x}" y="${y + 39}" text-anchor="middle" font-size="14" fill="#56636a" font-family="Plex Mono, monospace">${sub}</text>` : ""}`;
-    let s = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="Plex Sans, Segoe UI, sans-serif" role="img" aria-label="Decision tree">`;
-    gx.forEach(x => { s += line(330, 44, x, 74); });
-    xs.forEach((x, i) => { s += line(gx[i < 3 ? 0 : 1], 124, x, 162); });
-    xs.forEach(x => sx.forEach((t, j) => { s += line(x, 214, t, 282, COLORS.s[j], 0.35); }));
-    s += box(330, 6, 300, 38, "Choose copper rod supplier", "", "#f6ece2", "#d9b393");
-    s += box(gx[0], 74, 270, 50, "C1 Logistic-Economic", `weight ${fmt(state.wC1, 2)}`, "#e7eef4", "#a9c0d3");
-    s += box(gx[1], 74, 270, 50, "C2 Quality-Sustain.", `weight ${fmt(1 - state.wC1, 2)}`, "#f3ece2", "#d4bc9c");
-    S.ATTR_ORDER.forEach((a, i) => { s += box(xs[i], 162, 100, 52, SHORT_ATTR[a], fmt(i < 3 ? w1[i] : w2[i - 3], 2), "#fff", i < 3 ? "#a9c0d3" : "#d4bc9c"); });
-    sx.forEach((x, j) => { s += box(x, 282, 170, 56, NAMES[j], `score ${fmt(ev.total[j])}`, "#fff", COLORS.s[j], 2.2); });
-    $("treeWrap").innerHTML = s + "</svg>";
-  }
-
-  function crPill(cr) { const c = cr <= 0.05 + 1e-9 ? "ok" : cr <= 0.10 ? "warn" : "bad"; return `<span class="pill ${c}">CR ${(cr * 100).toFixed(2)}%</span>`; }
-  function valueText(v, a, b) {
-    if (Math.abs(v - 1) < 1e-9) return "equal";
-    const big = v > 1 ? v : 1 / v;
-    return `${v > 1 ? a : b} preferred: ${Math.round(big)} (${S.SAATY_WORDS[Math.round(big)].toLowerCase()})`;
-  }
-  const MATRIX_ORDER = ["C1", "C2", "DeliveryTime", "Price", "Availability", "Aftersales", "Quality", "Sustainability"];
-  const PAIRS = [[0, 1], [0, 2], [1, 2]];
-  function buildMatrices() {
-    $("matrixGrid").innerHTML = MATRIX_ORDER.map(k => {
-      const J = state.J[k], it = J.items;
-      return `<div class="mx"><div class="mx-head"><span class="mx-title">${J.title}</span><span id="cr-${k}"></span></div>
-        ${PAIRS.map(([i, j]) => `<div class="cmp">
-          <div class="cmp-row"><span class="l" id="la-${k}-${i}${j}">${it[i]}</span>
-            <input type="range" min="0" max="16" step="1" value="${16 - S.nearestStep(J.m[i][j])}" id="sl-${k}-${i}${j}" aria-label="${it[i]} compared with ${it[j]}">
-            <span class="r" id="lb-${k}-${i}${j}">${it[j]}</span></div>
-          <div class="cmp-txt" id="tx-${k}-${i}${j}"></div></div>`).join("")}
-        <div class="mx-pri" id="pri-${k}"></div></div>`;
-    }).join("");
-    MATRIX_ORDER.forEach(k => PAIRS.forEach(([i, j]) => $(`sl-${k}-${i}${j}`).addEventListener("input", e => {
-      const v = S.SAATY_VALUES[16 - (+e.target.value)];          // slider left = row item preferred
-      state.J[k].m[i][j] = v; state.J[k].m[j][i] = 1 / v;
-      matrixReadout(k); changed();
-    })));
-    MATRIX_ORDER.forEach(matrixReadout);
-  }
-  function matrixReadout(k) {
-    const J = state.J[k], r = S.priorities(J.m);
-    $(`cr-${k}`).innerHTML = crPill(r.cr);
-    PAIRS.forEach(([i, j]) => {
-      const v = J.m[i][j];
-      $(`tx-${k}-${i}${j}`).textContent = valueText(v, J.items[i], J.items[j]);
-      $(`la-${k}-${i}${j}`).classList.toggle("on", v > 1);
-      $(`lb-${k}-${i}${j}`).classList.toggle("on", v < 1);
-    });
-    $(`pri-${k}`).innerHTML = J.items.map((n, i) => `<div>${n}<b>${fmt(r.p[i])}</b></div>`).join("");
-  }
-  function renderPaper() { renderSuppliers(); renderRepro(); renderTree(); }
-
-  /* ================================================================ SENSITIVITY */
-  function renderSensitivity() {
-    $("wRead").textContent = fmt(state.wC1, 2);
-    const xs = Array.from({ length: 101 }, (_, i) => i / 100);
-    const L = S.groupLines(state);
-    const at = w => [0, 1, 2].map(k => L.at0[k] + w * (L.at1[k] - L.at0[k]));
-    const flips = S.winnerFlips(state);
-    const bands = []; let start = 0, cur = S.rankOf(at(0))[0];
-    flips.concat([{ w: 1 }]).forEach(f => { bands.push({ from: start, to: f.w, color: hexA(COLORS.s[cur], 0.08) }); start = f.w; cur = S.rankOf(at(Math.min(1, f.w + 1e-6)))[0]; });
-    chart("lineChart", {
-      type: "line",
-      data: { datasets: [0, 1, 2].map(k => ({ label: NAMES[k], data: xs.map(x => ({ x, y: at(x)[k] })), borderColor: COLORS.s[k], backgroundColor: COLORS.s[k], borderWidth: 3, pointRadius: 0 })) },
-      options: {
-        parsing: false, interaction: { mode: "index", intersect: false },
-        scales: { x: { type: "linear", min: 0, max: 1, ticks: { stepSize: 0.1 }, title: axisTitle("Weight of Logistic-Economic") }, y: { beginAtZero: true, title: axisTitle("Final score") } },
-        plugins: {
-          legend: legendBottom({ usePointStyle: true, pointStyle: "line", boxWidth: 30 }),
-          markers: { bands, lines: [
-            { x: 0.5, label: "AHP", color: COLORS.muted, dash: [3, 4], row: 1 },
-            { x: 1 / 6, label: "ANP", color: COLORS.muted, dash: [3, 4], row: 1 },
-            ...flips.map(f => ({ x: f.w, label: `Flip ${fmt(f.w, 2)}`, color: COLORS.ink, dash: [6, 4], left: true })),
-            { x: state.wC1, color: COLORS.ink, width: 2 }] },
-          tooltip: { callbacks: { title: c => `Weight ${fmt(c[0].raw.x, 2)}`, label: c => `${c.dataset.label}: ${fmt(c.raw.y)}` } }
+  /* ---------- 1. input tables ---------- */
+  const OPTS = S.SAATY_VALUES.map((v, i) => `<option value="${i}">${frac(v)}</option>`).join("");
+  function buildTables() {
+    ["L", "R"].forEach(sd => {
+      $("tabs" + sd).innerHTML = KEYS().map(k => {
+        const it = J[k].items;
+        let h = `<div class="mat"><h4>${TNO[k]}: ${J[k].title.replace(/ \(Table \d\)/, "")}</h4><table class="data"><tr><th></th>${it.map(x => `<th>${x}</th>`).join("")}</tr>`;
+        for (let i = 0; i < 3; i++) {
+          h += `<tr><th>${it[i]}</th>`;
+          for (let j = 0; j < 3; j++) {
+            if (i === j) h += `<td>1</td>`;
+            else if (sd === "L" && j > i) h += `<td><select data-k="${k}" data-i="${i}" data-j="${j}">${OPTS}</select></td>`;
+            else h += `<td class="mono" id="c${sd}-${k}-${i}-${j}"></td>`;
+          }
+          h += `</tr>`;
         }
-      }
+        return h + `</table><div class="cr" id="cr${sd}-${k}"></div></div>`;
+      }).join("");
     });
-    const s = at(state.wC1), r = S.rankOf(s), lead = s[r[0]] - s[r[1]];
-    $("whatifTiles").innerHTML = `
-      <div class="tile winner-tile" style="--c:${COLORS.s[r[0]]}"><div class="tk">Winner at ${fmt(state.wC1, 2)}</div><div class="tv" style="font-family:var(--display)">${NAMES[r[0]]}</div>
-        <div class="ts">Lead over ${NAMES[r[1]]}: <b class="num">${fmt(lead)}</b></div></div>
-      <div class="tile"><div class="tk">Scores</div>${[0, 1, 2].map(k => `<div class="rank-row"><span><span class="dot s${k + 1}"></span>${NAMES[k]}</span><span class="num">${fmt(s[k])}</span></div>`).join("")}</div>
-      <div class="tile"><div class="tk">Winner changes at</div><div class="tv">${flips.length ? flips.map(f => fmt(f.w, 2)).join(", ") : "never"}</div>
-        <div class="ts">${flips.length ? `Below: ${NAMES[S.rankOf(at(flips[0].w - 0.01))[0]]}. Above: ${NAMES[S.rankOf(at(flips[0].w + 0.01))[0]]}.` : ""}</div></div>`;
-    const sens = S.attributeSensitivity(state);
-    $("sensTable").innerHTML = `<thead><tr><th>Attribute</th><th class="n">Weight now</th><th class="n">Flips at</th><th class="n">Change</th><th>New winner</th></tr></thead><tbody>` +
-      sens.map(x => x.flipAt === null
-        ? `<tr><td>${S.ATTRS[x.attr].label}</td><td class="n">${fmt(x.weight)}</td><td class="n">never</td><td class="n">&ndash;</td><td>&ndash;</td></tr>`
-        : `<tr><td>${S.ATTRS[x.attr].label}</td><td class="n">${fmt(x.weight)}</td><td class="n">${fmt(x.flipAt)}</td><td class="n">${x.flipAt > x.weight ? "+" : ""}${fmt(x.flipAt - x.weight)}</td><td><span class="dot s${x.newWinner + 1}"></span>${NAMES[x.newWinner]}</td></tr>`).join("") + "</tbody>";
+    document.querySelectorAll("#tabsL select").forEach(sel => sel.addEventListener("change", () => {
+      const { k, i, j } = sel.dataset, v = S.SAATY_VALUES[+sel.value];
+      J[k].m[i][j] = v; J[k].m[j][i] = 1 / v; renderAll(true);
+    }));
+    const opts = KEYS().map(k => `<option value="${k}">${TNO[k]}: ${J[k].title.replace(/ \(Table \d\)/, "")}</option>`).join("");
+    document.querySelectorAll("select.pick").forEach(p => {
+      p.innerHTML = opts;
+      p.addEventListener("change", () => { document.querySelectorAll("select.pick").forEach(q => q.value = p.value); renderWorking(); });
+    });
+  }
+  function crSpan(cr) { return `<span class="${cr <= LIMIT + 1e-9 ? "ok" : "bad"}">CR ${pc2(cr)}</span>`; }
+  function renderTables() {
+    const F = fixedJ();
+    document.querySelectorAll("#tabsL select").forEach(sel => { const { k, i, j } = sel.dataset; sel.value = S.nearestStep(J[k].m[i][j]); });
+    let failL = 0, failR = 0;
+    for (const k of KEYS()) {
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+        if (i === j) continue;
+        const cl = $(`cL-${k}-${i}-${j}`); if (cl) cl.textContent = frac(J[k].m[i][j]);
+        const cr = $(`cR-${k}-${i}-${j}`);
+        cr.textContent = frac(F[k].m[i][j]);
+        cr.className = "mono" + (Math.abs(F[k].m[i][j] - J[k].m[i][j]) > 1e-9 ? " chg" : "");
+      }
+      const pL = S.priorities(J[k].m), pR = S.priorities(F[k].m);
+      if (pL.cr > LIMIT + 1e-9) failL++; if (pR.cr > LIMIT + 1e-9) failR++;
+      $(`crL-${k}`).innerHTML = `${crSpan(pL.cr)} · w: ${pL.p.map(f3).join(", ")}`;
+      $(`crR-${k}`).innerHTML = `${crSpan(pR.cr)} · w: ${pR.p.map(f3).join(", ")}`;
+    }
+    $("crL").innerHTML = `Consistency: <span class="bad">${failL} of 8 tables above 5%</span>`;
+    $("crR").innerHTML = `Consistency: <span class="${failR ? "bad" : "ok"}">${8 - failR} of 8 tables within 5%</span> (${KEYS().reduce((n, k) => n + fixTable(J[k].m).changes.length, 0)} answers re-checked)`;
+  }
+  function working(M, items, paperCR) {
+    const r = S.priorities(M), Aw = M.map(row => row.reduce((s, x, j) => s + x * r.p[j], 0));
+    let h = `<table class="data"><tr><th></th>${items.map(x => `<th>${x}</th>`).join("")}<th>w</th><th>A·w</th><th>(A·w)÷w</th></tr>`;
+    for (let i = 0; i < 3; i++) h += `<tr><th>${items[i]}</th>${M[i].map(x => `<td>${frac(x)}</td>`).join("")}<td><b>${f4(r.p[i])}</b></td><td>${f4(Aw[i])}</td><td>${f4(Aw[i] / r.p[i])}</td></tr>`;
+    h += `</table><div class="formula">λmax = average of last column = ${f4(r.lambda)}
+CI = (λmax − 3) ÷ 2 = ${f4(r.ci)}
+CR = CI ÷ RI = ${f4(r.ci)} ÷ 0.52 = ${pc2(r.cr)}  ${r.cr <= LIMIT + 1e-9 ? "within 5%" : "ABOVE 5%"}${paperCR !== undefined ? `  (paper prints ${paperCR.toFixed(2)}%)` : ""}</div>`;
+    return h + `<p class="note">RI = 0.52 is the random index used by SuperDecisions, the software the paper used; with it every CR equals the paper's printed value.</p>`;
+  }
+  function renderWorking() {
+    const k = document.querySelector("select.pick").value, F = fixedJ();
+    $("workL").innerHTML = working(J[k].m, J[k].items, J[k].paperInconsistency);
+    const ch = fixTable(J[k].m).changes;
+    $("workR").innerHTML = working(F[k].m, J[k].items) +
+      `<p class="note">${ch.length ? "Re-checked: " + ch.map(c => `${J[k].items[c.i]} vs ${J[k].items[c.j]}: ${frac(c.from)} → ${frac(c.to)}`).join("; ") : "No change needed: this table already passes."}</p>`;
   }
 
-  /* ================================================================ REAL NUMBERS */
-  const MEAS_ROWS = [
-    ["price", "Price per rod (€)", "230 to 350", "1"],
-    ["leadDays", "Delivery time (days)", "3 to 7", "1"],
-    ["defect2018", "Bad parts 2018 (%)", "6.67 to 15", "0.01"]
-  ];
-  function buildMeasuredTable() {
-    const m = state.measured;
-    $("measuredTable").innerHTML = `<thead><tr><th>Measure</th><th class="n">Supplier 1</th><th class="n">Supplier 2</th><th class="n">Supplier 3</th><th>Paper's range</th></tr></thead><tbody>` +
-      MEAS_ROWS.map(r => `<tr><td>${r[1]}</td>${[0, 1, 2].map(i => `<td class="n"><input type="number" min="0.01" step="${r[3]}" id="m-${r[0]}-${i}" value="${m[r[0]][i]}" aria-label="${r[1]}, ${NAMES[i]}"></td>`).join("")}<td>${r[2]}</td></tr>`).join("") + "</tbody>";
-    MEAS_ROWS.forEach(r => [0, 1, 2].forEach(i => $(`m-${r[0]}-${i}`).addEventListener("change", e => {
-      const v = parseFloat(e.target.value);
-      if (v > 0) { state.measured[r[0]][i] = v; changed(); } else e.target.value = state.measured[r[0]][i];
-    })));
-  }
-  function renderData() {
-    const op = S.localScores(state.J, "paper", state.measured), me = S.localScores(state.J, "measured", state.measured);
-    const keys = ["Price", "DeliveryTime", "Quality"], labels = [], dOp = [], dMe = [], cOp = [], cMe = [];
-    keys.forEach(k => [0, 1, 2].forEach(i => { labels.push(i === 1 ? [`S${i + 1}`, S.ATTRS[k].short] : `S${i + 1}`); dOp.push(op[k][i]); dMe.push(me[k][i]); cOp.push(COLORS.s[i]); cMe.push(hatch(COLORS.s[i])); }));
-    chart("compareChart", {
-      type: "bar",
-      data: { labels, datasets: [{ label: "Opinions", data: dOp, backgroundColor: cOp, borderWidth: 0 }, { label: "Real numbers", data: dMe, backgroundColor: cMe, borderColor: cOp, borderWidth: 1 }] },
-      options: {
-        scales: { y: { beginAtZero: true, max: 0.8, title: axisTitle("Score") }, x: { grid: { display: false }, ticks: { color: COLORS.ink, font: { size: 14 }, maxRotation: 0, autoSkip: false } } },
-        plugins: { legend: legendBottom({ generateLabels: () => [{ text: "Opinions (paper)", fillStyle: "#7a858b", strokeStyle: "#7a858b", lineWidth: 0 }, { text: "Real numbers", fillStyle: hatch("#7a858b"), strokeStyle: "#7a858b", lineWidth: 1 }] }),
-          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.raw)}` } } }
-      }
+  /* ---------- 2. attribute scores ---------- */
+  function scoresTable(sd) {
+    const st = side(sd), L = S.localScores(st.J, st.mode, meas);
+    const v1 = S.priorities(st.J.C1.m).p, v2 = S.priorities(st.J.C2.m).p;
+    let h = `<table class="data full"><tr><th class="l">Attribute</th><th>Weight in group</th><th>S1</th><th>S2</th><th>S3</th><th>Scored from</th></tr>`;
+    S.ATTR_ORDER.forEach(a => {
+      const g = S.ATTRS[a].group, v = g === "C1" ? v1[S.GROUPS[0].attrs.indexOf(a)] : v2[S.GROUPS[1].attrs.indexOf(a)];
+      const real = sd === "R" && REAL[a];
+      const what = { Price: "price", DeliveryTime: "delivery days", Quality: "bad-part rate" }[a];
+      let src = real ? `<span class="src-real">real numbers (${what})</span>` : `<span class="src-op">opinion (${TNO[a]})</span>`;
+      h += `<tr><td class="l">${S.ATTRS[a].short} (${g})</td><td>${f3(v)}</td>${L[a].map(x => `<td>${real ? "<b>" + f3(x) + "</b>" : f3(x)}</td>`).join("")}<td>${src}</td></tr>`;
     });
-    const tOp = S.evaluate({ ...state, mode: "paper" }).total, tMe = S.evaluate({ ...state, mode: "measured" }).total;
-    chart("finalCompareChart", {
-      type: "bar",
-      data: { labels: NAMES, datasets: [
-        { label: "Opinions (paper)", data: tOp, backgroundColor: COLORS.s, borderWidth: 0, barThickness: 22 },
-        { label: "Real numbers", data: tMe, backgroundColor: COLORS.s.map(hatch), borderColor: COLORS.s, borderWidth: 1, barThickness: 22 }] },
-      options: {
-        indexAxis: "y",
-        scales: { x: { beginAtZero: true, title: axisTitle(`Final score (weight ${fmt(state.wC1, 2)})`) }, y: { grid: { display: false }, ticks: { color: COLORS.ink, font: { size: 15, weight: 600 } } } },
-        plugins: { legend: legendBottom({ generateLabels: () => [{ text: "Opinions (paper)", fillStyle: "#7a858b", strokeStyle: "#7a858b", lineWidth: 0 }, { text: "Real numbers", fillStyle: hatch("#7a858b"), strokeStyle: "#7a858b", lineWidth: 1 }] }),
-          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.raw)}` } } }
-      }
-    });
+    h += `</table>`;
+    const p = L.Price, r = Math.max(...meas.price) / Math.min(...meas.price);
+    h += `<p class="win">Price: real gap ${r.toFixed(2)}×, score gap <b class="${sd === "L" ? "bad" : "ok"}">${(Math.max(...p) / Math.min(...p)).toFixed(2)}×</b></p>`;
+    return h;
   }
-
-  /* ================================================================ ROBUSTNESS */
-  let mcDirty = true;
-  function renderRobust(force) {
-    if (!force && !mcDirty && charts.mcWinChart) return;
-    mcDirty = false;
-    $("mcRun").textContent = "Running\u2026"; $("mcRun").disabled = true;
-    setTimeout(() => { runRobust(); $("mcRun").textContent = "Run"; $("mcRun").disabled = false; }, 30);
-  }
-  function runRobust() {
-    const res = S.monteCarlo(state, { runs: state.mc.runs, steps: state.mc.steps, wMin: state.mc.range[0], wMax: state.mc.range[1], seed: 7, measuredNoise: state.mode === "measured" ? 5 : 0 });
-    const ws = res.winShare, top = S.rankOf(ws)[0], sure = ws[top] >= 0.8;
-    $("mcVerdict").innerHTML = `<span class="pill ${sure ? "ok" : "warn"}">${sure ? "Reliable winner" : "No reliable winner"}</span><span>${NAMES[top]} wins <b class="num">${pct(ws[top])}</b> of trials</span>`;
-    chart("mcWinChart", {
-      type: "bar",
-      data: { labels: NAMES, datasets: [{ data: ws.map(x => x * 100), backgroundColor: COLORS.s, borderWidth: 0, barThickness: 34 }] },
-      options: { indexAxis: "y", scales: { x: { min: 0, max: 100, ticks: { callback: v => v + "%" } }, y: { grid: { display: false }, ticks: { color: COLORS.ink, font: { size: 15, weight: 600 } } } },
-        plugins: { tooltip: { callbacks: { label: c => `${c.raw.toFixed(1)}%` } } } }
-    });
-    $("mcRankTable").innerHTML = `<thead><tr><th>Finishes</th>${NAMES.map(n => `<th class="n">${n}</th>`).join("")}</tr></thead><tbody>` +
-      ["1st", "2nd", "3rd"].map((p, k) => `<tr><td>${p}</td>${res.rankShare.map(r => `<td class="n">${pct(r[k], 1)}</td>`).join("")}</tr>`).join("") + "</tbody>";
-    const lo = -0.5, bins = 40, w = 1 / bins, counts = new Array(bins).fill(0);
-    res.gaps.forEach(x => { counts[Math.min(bins - 1, Math.max(0, Math.floor((x - lo) / w)))]++; });
-    const centers = counts.map((_, i) => lo + w * (i + 0.5));
-    chart("mcHistChart", {
-      type: "bar",
-      data: { labels: centers.map(c => c.toFixed(3)), datasets: [{ data: counts, backgroundColor: centers.map(c => c >= 0 ? COLORS.s[0] : COLORS.s[1]), borderWidth: 0, barPercentage: 1, categoryPercentage: 0.95 }] },
-      options: {
-        scales: { x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: false, callback: (v, i) => (i % 8 === 0 ? (+centers[i] - 0.0125).toFixed(1) : "") }, title: axisTitle("← Supplier 2 wins        S1 − S2        Supplier 1 wins →") }, y: { title: axisTitle("Trials") } },
-        plugins: { tooltip: { callbacks: { title: c => `Difference ${(+c[0].label).toFixed(3)}`, label: c => `${c.raw} trials` } } }
-      }
-    });
-  }
-
-  /* ================================================================ OUTLOOK */
-  function renderPriorities() {
-    const [c, q, sp] = state.prio;
-    $("pCostV").textContent = c; $("pQualV").textContent = q; $("pSpeedV").textContent = sp;
-    const L = S.localScores(state.J, state.mode, state.measured);
-    const sc = S.scoreWith(S.priorityWeights(state.J, c, q, sp), L), r = S.rankOf(sc), mx = Math.max(...sc), lead = sc[r[0]] - sc[r[1]];
-    $("prioResult").innerHTML = r.map(k => `<div class="hbar"><span>${NAMES[k]}</span><div class="track"><div class="fill" style="width:${sc[k] / mx * 100}%;background:${COLORS.s[k]}"></div></div><span class="v">${fmt(sc[k])}</span></div>`).join("") +
-      `<div class="callout ${lead < 0.03 ? "" : "key"}"><b>${lead < 0.03 ? "Too close to call" : NAMES[r[0]] + " fits this priority"}</b>${lead < 0.03 ? "Let the 2-year cost decide, or split the order." : `Ahead of ${NAMES[r[1]]} by ${fmt(lead)}.`}</div>`;
-  }
-  function renderBreakEven() {
-    const m = state.measured, plan = state.plan, e = [0, 1, 2].map(i => S.expectedCost(i, m, plan));
-    const be = S.breakEvenBadCost(0, 1, m, plan);
-    const matchPrice = m.price[0] * (e[1].total - e[0].qual - e[0].stop) / e[0].buy;
-    const dH = e[0].stopH - e[1].stopH;
-    $("breakEven").innerHTML = `
-      <div class="tile"><div class="tk">S1 is worth it only if one bad rod costs more than</div><div class="tv">${be ? eur(be) : "never"}</div><div class="ts">Assumed now: ${eur(plan.costPerBadPart)}</div></div>
-      <div class="tile"><div class="tk">Price S1 must reach to match S2</div><div class="tv">${matchPrice > 0 ? eur(matchPrice) : "not reachable"}</div><div class="ts">Now ${eur(m.price[0])} per rod</div></div>
-      <div class="tile"><div class="tk">Extra line-stop hours with S1 vs S2</div><div class="tv">${dH >= 0 ? "+" : ""}${dH.toFixed(1)} h</div><div class="ts">Delivery ${m.leadDays[0]} vs ${m.leadDays[1]} days</div></div>`;
-  }
-  function renderOutlook() {
-    renderPriorities(); renderBreakEven();
-    $("splitRead").textContent = state.split + "%";
-    const plan = state.plan, m = state.measured;
-    const strats = [
-      { name: "Only S1", shares: [1, 0, 0], color: COLORS.s[0] }, { name: "Only S2", shares: [0, 1, 0], color: COLORS.s[1] },
-      { name: "Only S3", shares: [0, 0, 1], color: COLORS.s[2] }, { name: `Split ${state.split}/${100 - state.split} S1/S2`, shares: [state.split / 100, 1 - state.split / 100, 0], color: COLORS.ink, dash: [6, 4] }];
-    const sims = strats.map((st, i) => S.simulate(st.shares, m, plan, 400, 100 + i));
-    const ds = [];
-    strats.forEach((st, i) => {
-      ds.push({ label: "_lo", data: sims[i].p10, borderWidth: 0, pointRadius: 0, fill: false });
-      ds.push({ label: "_hi", data: sims[i].p90, borderWidth: 0, pointRadius: 0, fill: "-1", backgroundColor: hexA(st.color, 0.10) });
-      ds.push({ label: st.name, data: sims[i].mean, borderColor: st.color, backgroundColor: st.color, borderDash: st.dash || [], borderWidth: 3, pointRadius: 0, fill: false, tension: 0.15 });
-    });
-    chart("outlookChart", {
-      type: "line",
-      data: { labels: Array.from({ length: plan.months }, (_, t) => t + 1), datasets: ds },
-      options: {
-        interaction: { mode: "index", intersect: false },
-        scales: { x: { grid: { display: false }, title: axisTitle("Month") }, y: { title: axisTitle("Total cost so far"), ticks: { callback: v => "€" + v / 1000 + "k" } } },
-        plugins: { legend: legendBottom({ usePointStyle: true, pointStyle: "line", boxWidth: 30, filter: it => !it.text.startsWith("_") }),
-          tooltip: { filter: it => !it.dataset.label.startsWith("_"), callbacks: { title: c => `Month ${c[0].label}`, label: c => `${c.dataset.label}: ${eur(c.raw)}` } } }
-      }
-    });
-    const best = Math.min(...sims.map(s => s.mean[s.mean.length - 1]));
-    $("outlookTiles").innerHTML = strats.map((st, i) => {
-      const s = sims[i], tot = s.mean[s.mean.length - 1];
-      return `<div class="tile winner-tile" style="--c:${st.color}"><div class="tk">${st.name}</div><div class="tv">${eur(tot)}</div>
-        <div class="ts">${tot - best < 1 ? '<span class="pill ok">lowest</span> ' : ""}${s.bad.toFixed(1)} bad rods &middot; ${Math.round(s.stopHours)} h stopped</div></div>`;
-    }).join("");
-  }
-  const PLAN_FIELDS = [
-    ["rodsPerYear", "Rods per year", "paper", 1], ["defectTrendPerYear", "Rise in bad parts per year (pts)", "paper", 0.01],
-    ["priceRisePct", "Copper price rise per year (%)", "market", 0.5], ["costPerBadPart", "Cost of one bad rod (€)", "est", 10],
-    ["urgentPerYear", "Urgent needs per year", "est", 1], ["shelfEmptyPct", "Chance shelf is empty (%)", "est", 1],
-    ["stopHoursPerDay", "Hours lost per waiting day", "est", 1], ["stopCostPerHour", "Cost of one stop hour (€)", "est", 25],
-    ["months", "Months", "est", 1]];
-  const TAGS = { paper: '<span class="tag paper">paper</span>', est: '<span class="tag est">estimate</span>', market: '<span class="tag market">market</span>' };
-  function buildPlanGrid() {
-    $("planGrid").innerHTML = PLAN_FIELDS.map(f => `<div class="plan-item"><label for="pl-${f[0]}">${f[1]}${TAGS[f[2]]}</label><input type="number" id="pl-${f[0]}" step="${f[3]}" value="${state.plan[f[0]]}"></div>`).join("");
-    PLAN_FIELDS.forEach(f => $(`pl-${f[0]}`).addEventListener("change", e => {
-      let v = parseFloat(e.target.value);
-      if (!(v >= 0)) { e.target.value = state.plan[f[0]]; return; }
-      if (f[0] === "months") v = Math.round(Math.min(36, Math.max(12, v)));
-      if (f[0] === "shelfEmptyPct") v = Math.min(100, v);
-      e.target.value = v; state.plan[f[0]] = v; scheduleOutlook();
+  const MEAS_ROWS = [["price", "Price per rod (€)", "€230 to €350"], ["leadDays", "Delivery time (days)", "3 to 7 days"], ["defect2018", "Bad parts 2018 (%)", "6.67% to 15%"]];
+  function buildMeasured() {
+    $("measTable").innerHTML = `<tr><th class="l">Value</th><th>S1</th><th>S2</th><th>S3</th><th>Paper's range</th><th class="l">Working: 1/x ÷ Σ(1/x)</th></tr>` +
+      MEAS_ROWS.map(([k, lab, rng]) => `<tr><td class="l">${lab}</td>${[0, 1, 2].map(i => `<td><input type="number" step="any" data-k="${k}" data-i="${i}"></td>`).join("")}<td>${rng}</td><td class="l mono" id="mw-${k}"></td></tr>`).join("");
+    document.querySelectorAll("#measTable input").forEach(inp => inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value); if (v > 0) { meas[inp.dataset.k][+inp.dataset.i] = v; renderAll(true); }
     }));
   }
-
-  /* ================================================================ routing */
-  function updateStatus() {
-    const r = S.rankOf(S.evaluate(state).total);
-    $("tabStatus").innerHTML = `<span>Weight <b class="num">${fmt(state.wC1, 2)}</b></span><span>Leader <b><span class="dot s${r[0] + 1}"></span>${NAMES[r[0]]}</b></span>`;
+  function renderScores() {
+    $("scoresL").innerHTML = scoresTable("L");
+    $("scoresR").innerHTML = scoresTable("R");
+    document.querySelectorAll("#measTable input").forEach(inp => { inp.value = meas[inp.dataset.k][+inp.dataset.i]; });
+    MEAS_ROWS.forEach(([k]) => {
+      const inv = meas[k].map(x => 1 / x), s = inv.reduce((a, b) => a + b, 0);
+      $("mw-" + k).textContent = `${inv.map(f4).join(", ")} ÷ ${f4(s)}`;
+    });
   }
-  const RENDER = { paper: renderPaper, sensitivity: renderSensitivity, data: renderData, robust: () => renderRobust(false), outlook: renderOutlook };
-  let current = "paper";
-  function show(view) {
-    if (!RENDER[view]) view = "paper";
-    current = view;
-    document.querySelectorAll(".view").forEach(v => { v.hidden = v.id !== "view-" + view; });
-    document.querySelectorAll(".tabs a").forEach(a => a.classList.toggle("active", a.dataset.view === view));
-    RENDER[view](); window.scrollTo({ top: 0 });
-  }
-  function changed() { mcDirty = true; updateStatus(); if (current === "robust") renderRobust(true); else RENDER[current](); }
-  let timer = null;
-  function scheduleOutlook() { clearTimeout(timer); timer = setTimeout(() => { if (current === "outlook") renderOutlook(); }, 120); }
 
-  function setMode(m) {
-    state.mode = m;
-    $("modePaper").setAttribute("aria-pressed", m === "paper");
-    $("modeMeasured").setAttribute("aria-pressed", m === "measured");
-    changed();
+  /* ---------- 3. final score ---------- */
+  function finalTable(sd) {
+    const st = side(sd), ev = S.evaluate(st);
+    let h = `<table class="data full"><tr><th class="l">Attribute</th><th>Global weight</th>${SS.map(s => `<th>${s}: weight × score</th>`).join("")}</tr>`;
+    S.ATTR_ORDER.forEach(a => {
+      h += `<tr><td class="l">${S.ATTRS[a].short}</td><td>${f4(ev.W[a])}</td>${ev.L[a].map(x => `<td>${f4(ev.W[a])} × ${f3(x)} = <b>${f4(ev.W[a] * x)}</b></td>`).join("")}</tr>`;
+    });
+    h += `<tr class="total"><td class="l" colspan="2">Final score</td>${ev.total.map(x => `<td>${f4(x)}</td>`).join("")}</tr>`;
+    if (sd === "L") {
+      if (Math.abs(w - 0.5) < 0.002) h += `<tr class="ref"><td class="l" colspan="2">Paper, Table 10 (AHP)</td>${S.PAPER_RESULTS.AHP.map(x => `<td>${f4(x)}</td>`).join("")}</tr>`;
+      if (Math.abs(w - 1 / 6) < 0.002) h += `<tr class="ref"><td class="l" colspan="2">Paper, Table 11 (ANP)</td>${S.PAPER_RESULTS.ANP.map(x => `<td>${f4(x)}</td>`).join("")}</tr>`;
+    }
+    const t = ev.total, o = S.rankOf(t);
+    h += `</table><p class="win">Winner at w = ${w.toFixed(3)}: <b>${SUP[o[0]]}</b>, lead over ${SUP[o[1]]} = ${f4(t[o[0]] - t[o[1]])}</p>`;
+    if (sd === "L") {
+      const okA = S.evaluate(side("L", 0.5)).total.every((x, i) => Math.abs(x - S.PAPER_RESULTS.AHP[i]) < 5e-5);
+      const okN = S.evaluate(side("L", 1 / 6)).total.every((x, i) => Math.abs(x - S.PAPER_RESULTS.ANP[i]) < 5e-5);
+      h += okA && okN ? `<p class="note"><span class="ok">Check passed:</span> at w = 0.5 this equals the paper's AHP result (Table 10), and at w = 1/6 its ANP result (Table 11), to 4 decimals. The paper's two methods differ only in this one weight.</p>`
+                      : `<p class="note">Inputs have been changed, so the result no longer equals the paper's Tables 10 and 11. Press "Reset to paper values" to compare again.</p>`;
+    }
+    return h;
   }
-  $("modePaper").addEventListener("click", () => setMode("paper"));
-  $("modeMeasured").addEventListener("click", () => setMode("measured"));
-  $("resetAll").addEventListener("click", () => {
-    Object.assign(state, { J: S.copyJudgments(S.PAPER_JUDGMENTS), measured: deep(S.MEASURED_DEFAULT), wC1: 0.5, prio: [4, 4, 4], split: 50, plan: deep(S.PLAN_DEFAULT) });
-    $("wSlider").value = 0.5; $("splitSlider").value = 50;
-    ["pCost", "pQual", "pSpeed"].forEach((id, i) => { $(id).value = state.prio[i]; });
-    buildMatrices(); buildMeasuredTable(); buildPlanGrid(); setMode("paper");
-  });
-  $("wSlider").addEventListener("input", e => { state.wC1 = +e.target.value; changed(); });
-  document.querySelectorAll("[data-w]").forEach(b => b.addEventListener("click", () => { state.wC1 = +b.dataset.w; $("wSlider").value = state.wC1; changed(); }));
-  $("mcSteps").addEventListener("change", e => { state.mc.steps = +e.target.value; renderRobust(true); });
-  $("mcRange").addEventListener("change", e => { state.mc.range = e.target.value.split(",").map(Number); renderRobust(true); });
-  $("mcRuns").addEventListener("change", e => { state.mc.runs = +e.target.value; renderRobust(true); });
-  $("mcRun").addEventListener("click", () => renderRobust(true));
-  ["pCost", "pQual", "pSpeed"].forEach((id, i) => $(id).addEventListener("input", e => { state.prio[i] = +e.target.value; renderPriorities(); }));
-  document.querySelectorAll("[data-p]").forEach(b => b.addEventListener("click", () => {
-    state.prio = b.dataset.p.split(",").map(Number);
-    ["pCost", "pQual", "pSpeed"].forEach((id, i) => { $(id).value = state.prio[i]; }); renderPriorities();
-  }));
-  $("splitSlider").addEventListener("input", e => { state.split = +e.target.value; $("splitRead").textContent = state.split + "%"; scheduleOutlook(); });
-  $("resetPlan").addEventListener("click", () => { state.plan = deep(S.PLAN_DEFAULT); buildPlanGrid(); renderOutlook(); });
-  window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 
-  buildMatrices(); buildMeasuredTable(); buildPlanGrid(); updateStatus();
-  show(location.hash.slice(1) || "paper");
+  /* ---------- 4. flip point ---------- */
+  /* Exact crossings of the top supplier along w (scores are straight lines in w). */
+  function flipInfo(sd) {
+    const st = side(sd), { at0, at1 } = S.groupLines(st), fl = S.winnerFlips(st);
+    const segs = [], pts = [0].concat(fl.map(f => f.w), [1]);
+    for (let k = 0; k < pts.length - 1; k++) {
+      const m = (pts[k] + pts[k + 1]) / 2;
+      segs.push({ from: pts[k], to: pts[k + 1], win: winner(at0.map((x, i) => x + m * (at1[i] - x))) });
+    }
+    const everWin = new Set(segs.map(g => g.win));
+    return { at0, at1, fl, segs, never: [0, 1, 2].filter(i => !everWin.has(i)) };
+  }
+  function renderFlip(sd) {
+    const F = flipInfo(sd), { at0, at1, fl } = F;
+    let txt = `S(0) = ${at0.map(f4).join(", ")}   (w = 0: only quality group)
+S(1) = ${at1.map(f4).join(", ")}   (w = 1: only logistic group)`;
+    fl.forEach(f => {
+      const [i, j] = f.pair, d0 = at0[i] - at0[j], d1 = at1[i] - at1[j];
+      txt += `\nS${i + 1} = S${j + 1} at w* = ${f4(d0)} ÷ (${f4(d0)} − (${f4(d1)})) = <b>${f3(f.w)}</b>`;
+    });
+    if (!fl.length) txt += `\nNo crossing at the top between w = 0 and w = 1.`;
+    const desc = F.segs.map(g => `${SUP[g.win]} wins for w from ${f3(g.from)} to ${f3(g.to)}`).join("; ");
+    const nev = F.never.length ? ` ${F.never.map(i => SUP[i]).join(" and ")} never ${F.never.length > 1 ? "win" : "wins"}.` : "";
+    $("flip" + sd).innerHTML = `<div class="formula">${txt}</div><p class="win">${desc}.${nev}</p>`;
+    const xs = Array.from({ length: 21 }, (_, i) => i / 20);
+    chart("chartFlip" + sd, {
+      type: "line",
+      data: { labels: xs.map(x => x.toFixed(2)), datasets: [0, 1, 2].map(i => ({ label: SUP[i], data: xs.map(x => at0[i] + x * (at1[i] - at0[i])), borderColor: COL[i], backgroundColor: COL[i], borderWidth: 3, pointRadius: 0 })) },
+      options: { plugins: { title: { display: true, text: fl.length ? `Flip point w* = ${fl.map(f => f3(f.w)).join(", ")}` : "No flip point" } },
+        scales: { x: { title: { display: true, text: "w" }, ticks: { maxTicksLimit: 11 } }, y: { min: 0, title: { display: true, text: "Final score" } } } }
+    });
+    return F;
+  }
+
+  /* ---------- 5. trials ---------- */
+  function runMC() {
+    const N = Math.max(100, Math.min(20000, parseInt($("mcRuns").value) || 5000));
+    const opt = { runs: N, steps: 1, wMin: 0.1, wMax: 0.9, seed: 7 };
+    mc = { N, L: S.monteCarlo(side("L"), Object.assign({}, opt, { measuredNoise: 0 })), R: S.monteCarlo(side("R"), Object.assign({}, opt, { measuredNoise: 5 })) };
+    ["L", "R"].forEach(sd => {
+      const r = mc[sd];
+      $("mc" + sd).innerHTML = `<table class="data full"><tr><th class="l">Supplier</th><th>1st</th><th>2nd</th><th>3rd</th></tr>` +
+        SUP.map((s, i) => `<tr><td class="l">${s}</td>${r.rankShare[i].map((x, p) => `<td>${p === 0 ? "<b>" + pc(x) + "</b>" : pc(x)}</td>`).join("")}</tr>`).join("") + `</table>`;
+      chart("chartMC" + sd, {
+        type: "bar",
+        data: { labels: SUP, datasets: [{ label: "% of trials won", data: r.winShare.map(x => x * 100), backgroundColor: sd === "L" ? "#8c96a6" : "#1b7a32" }] },
+        options: { plugins: { legend: { display: false }, title: { display: true, text: `% of ${N.toLocaleString("en-GB")} trials won (80% = safe choice)` } }, scales: { y: { min: 0, max: 100 } } }
+      });
+    });
+  }
+
+  /* ---------- 6. cost ---------- */
+  const PLAN_ROWS = [
+    ["rodsPerYear", "Rods needed per year", "paper: yearly spend ÷ average price"],
+    ["defectTrendPerYear", "Rise in bad parts (% points a year)", "paper: 2017 to 2018 rise"],
+    ["priceRisePct", "Copper price rise (% a year)", "estimate"],
+    ["costPerBadPart", "Handling cost of one bad rod (€)", "estimate"],
+    ["urgentPerYear", "Urgent breakdowns per year", "estimate"],
+    ["shelfEmptyPct", "Chance spare shelf is empty (%)", "estimate"],
+    ["stopHoursPerDay", "Hours lost per day of waiting", "estimate (one shift)"],
+    ["stopCostPerHour", "Cost of one hour of line stop (€)", "estimate"]
+  ];
+  function buildPlan() {
+    $("planTable").innerHTML = `<tr><th class="l">Input</th><th>Value</th><th class="l">Source</th></tr>` +
+      PLAN_ROWS.map(([k, lab, src]) => `<tr><td class="l">${lab}</td><td><input type="number" step="any" data-k="${k}"></td><td class="l"><span class="tag">${src}</span></td></tr>`).join("");
+    document.querySelectorAll("#planTable input").forEach(inp => inp.addEventListener("change", () => {
+      const v = parseFloat(inp.value); if (v >= 0) { plan[inp.dataset.k] = v; renderAll(false); }
+    }));
+  }
+  let costCache;
+  function renderCost() {
+    document.querySelectorAll("#planTable input").forEach(inp => { inp.value = plan[inp.dataset.k]; });
+    const e = [0, 1, 2].map(i => S.expectedCost(i, meas, plan));
+    const split = {}; ["buy", "bad", "qual", "stop", "stopH", "total"].forEach(k => { split[k] = (e[0][k] + e[1][k]) / 2; });
+    const plans = [...e, split], names = ["Only S1", "Only S2", "Only S3", "Split 50/50"];
+    const rows = [
+      ["A. Buying = rods × price", p => eur(p.buy)],
+      [`Bad rods expected`, p => p.bad.toFixed(1)],
+      [`B. Handling = bad rods × €${plan.costPerBadPart}`, p => eur(p.qual)],
+      [`Line-stop hours`, p => p.stopH.toFixed(1)],
+      [`C. Line stops = hours × €${plan.stopCostPerHour}`, p => eur(p.stop)]
+    ];
+    let h = `<table class="data full"><tr><th class="l">24 months</th>${names.map(n => `<th>${n}</th>`).join("")}</tr>` +
+      rows.map(([lab, fn]) => `<tr><td class="l">${lab}</td>${plans.map(p => `<td>${fn(p)}</td>`).join("")}</tr>`).join("") +
+      `<tr class="total"><td class="l">Total = A + B + C</td>${plans.map(p => `<td>${eur(p.total)}</td>`).join("")}</tr></table>`;
+    const be = S.breakEvenBadCost(0, 1, meas, plan);
+    const best = plans.map(p => p.total).indexOf(Math.min(...plans.map(p => p.total)));
+    h += `<p class="win">Cheapest: <b>${names[best]}</b>. Supplier 1 pays off only if one bad rod costs more than <b>${be ? eur(be) : "-"}</b>.</p>`;
+    $("costR").innerHTML = h;
+    chart("chartCost", {
+      type: "bar",
+      data: { labels: names, datasets: [
+        { label: "A. Buying", data: plans.map(p => p.buy), backgroundColor: "#1f5fa8" },
+        { label: "B. Handling bad rods", data: plans.map(p => p.qual), backgroundColor: "#e0b400" },
+        { label: "C. Line stops", data: plans.map(p => p.stop), backgroundColor: "#b42318" }] },
+      options: { plugins: { title: { display: true, text: "Expected 2-year cost (€)" } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+    });
+    costCache = { e, be };
+  }
+
+  /* ---------- verdict ---------- */
+  function renderVerdict(FL, FR) {
+    const tL = S.evaluate(side("L")).total, tR = S.evaluate(side("R")).total;
+    const aA = S.evaluate(side("L", 0.5)).total, aN = S.evaluate(side("L", 1 / 6)).total;
+    const failL = KEYS().filter(k => S.priorities(J[k].m).cr > LIMIT + 1e-9).length;
+    const F = fixedJ(), failR = KEYS().filter(k => S.priorities(F[k].m).cr > LIMIT + 1e-9).length;
+    const pL = S.localScores(J, "paper", meas).Price, pR = S.localScores(F, "measured", meas).Price;
+    const ratio = a => (Math.max(...a) / Math.min(...a)).toFixed(2) + "×";
+    const real = (Math.max(...meas.price) / Math.min(...meas.price)).toFixed(2) + "×";
+    const wins = r => r.winShare.map((x, i) => `S${i + 1} ${pc(x)}`).join(", ");
+    const { e, be } = costCache;
+    const row = (k, p, m) => `<tr><td class="l"><b>${k}</b></td><td class="l p">${p}</td><td class="l m">${m}</td></tr>`;
+    $("verdict").innerHTML = `<table class="data"><tr><th class="l" style="width:18%">Point</th><th class="l" style="width:41%">Paper's model</th><th class="l">My model</th></tr>
+      ${row("Same inputs?", "Paper Tables 2 to 9", "Same tables; only the doubtful answers re-checked")}
+      ${row("Answer", `AHP: ${SUP[winner(aA)]} (${f3(Math.max(...aA))}); ANP: ${SUP[winner(aN)]} (${f3(Math.max(...aN))}). ` + (winner(aA) !== winner(aN) ? `<span class="bad">Two winners, no reason given.</span>` : `Same winner.`), `${SUP[winner(tR)]} at w = ${w.toFixed(3)} (S1 / S2 / S3 = ${tR.map(f3).join(" / ")}). <span class="ok">The weight that changes the winner is shown.</span>`)}
+      ${row("Consistency", `<span class="bad">${failL} of 8 tables above 5%</span>`, `<span class="ok">${8 - failR} of 8 tables within 5%</span>`)}
+      ${row("Price scoring", `Real gap ${real} scored as <span class="bad">${ratio(pL)}</span>`, `Real gap ${real} scored as <span class="ok">${ratio(pR)}</span>`)}
+      ${row("Flip point", `${FL.fl.length ? "w = " + FL.fl.map(f => f3(f.w)).join(", ") : "none"}, not reported in the paper`, `${FR.fl.length ? "w = " + FR.fl.map(f => f3(f.w)).join(", ") : "none"}, shown to the managers`)}
+      ${row("How sure?", `Not checked. (Our test: ${wins(mc.L)})`, `Tested: ${wins(mc.R)}`)}
+      ${row("Cost", `<span class="bad">Not shown</span>`, `S2 ${eur(e[1].total)}, S1 ${eur(e[0].total)}, S3 ${eur(e[2].total)}; S1 pays off only above ${be ? eur(be) : "-"} per bad rod`)}
+      ${row("Can it be checked?", "Hidden inside SuperDecisions software", "Every step shows the numbers and the working")}
+    </table>`;
+  }
+
+  function renderAll(withMC) {
+    renderTables(); renderWorking(); renderScores();
+    $("finalL").innerHTML = finalTable("L"); $("finalR").innerHTML = finalTable("R");
+    const FL = renderFlip("L"), FR = renderFlip("R");
+    if (withMC || !mc) runMC();
+    renderCost(); renderVerdict(FL, FR);
+    $("wInput").value = w.toFixed(3);
+  }
+
+  resetAll(); buildTables(); buildMeasured(); buildPlan();
+  $("wInput").addEventListener("change", () => { const v = parseFloat($("wInput").value); if (v >= 0 && v <= 1) { w = v; renderAll(false); } });
+  document.querySelectorAll("button[data-w]").forEach(b => b.addEventListener("click", () => { w = parseFloat(b.dataset.w); renderAll(false); }));
+  $("runMC").addEventListener("click", () => { runMC(); renderVerdict(flipInfo("L"), flipInfo("R")); });
+  $("reset").addEventListener("click", () => { resetAll(); renderAll(true); });
+  renderAll(true);
+  window.__ready = true;
 })(window.SDL);

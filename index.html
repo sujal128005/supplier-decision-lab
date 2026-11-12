@@ -4,208 +4,122 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Supplier Decision Lab</title>
-<link rel="icon" href="data:,">
 <link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:,">
 </head>
 <body>
-<header class="topbar">
-  <div class="brand">
-    <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-    <div>
-      <div class="brand-name">Supplier Decision Lab</div>
-      <div class="brand-sub">Copper rod supplier selection &middot; AHP / ANP review</div>
-    </div>
-  </div>
-  <div class="top-controls">
-    <span class="lbl" id="modeLbl">Price, delivery, quality scored from</span>
-    <div class="seg" role="group" aria-labelledby="modeLbl">
-      <button type="button" id="modePaper" aria-pressed="true">Opinions (paper)</button>
-      <button type="button" id="modeMeasured" aria-pressed="false">Real numbers</button>
-    </div>
-    <button type="button" class="btn ghost" id="resetAll">Reset</button>
-  </div>
+
+<header>
+  <h1>A supplier selection decision model using multi-criteria decision analysis in a small manufacturing company</h1>
+  <p>Base paper: Rodrigues, Šírová &amp; Mugurusi (2022), IFAC PapersOnLine 55(10), pp. 2773-2778 &nbsp;·&nbsp; Seminar ME496, IIITDM Kurnool &nbsp;·&nbsp; Sujal Negi (123ME0023)</p>
 </header>
 
-<nav class="tabs" aria-label="Sections">
-  <a href="#paper" data-view="paper"><span class="tab-tag">Paper</span>Paper's model</a>
-  <a href="#sensitivity" data-view="sensitivity"><span class="tab-tag new">New</span>Sensitivity</a>
-  <a href="#data" data-view="data"><span class="tab-tag new">New</span>Real numbers</a>
-  <a href="#robust" data-view="robust"><span class="tab-tag new">New</span>Robustness</a>
-  <a href="#outlook" data-view="outlook"><span class="tab-tag new">New</span>2-year outlook</a>
-  <div class="tab-status" id="tabStatus"></div>
-</nav>
+<div class="bar">
+  <span><b>Group weight w</b> (Logistic-Economic; Quality-Sustainability gets 1 − w):</span>
+  <input id="wInput" type="number" min="0" max="1" step="0.01" value="0.5">
+  <button data-w="0.5">w = 0.5 (paper's AHP)</button>
+  <button data-w="0.16667">w = 1/6 (paper's ANP)</button>
+  <button id="reset" class="right">Reset to paper values</button>
+</div>
 
-<main id="main">
+<main>
 
-  <!-- PAPER'S MODEL -->
-  <section class="view" id="view-paper">
-    <div class="view-head">
-      <h1>The paper's model</h1>
-      <p>3 suppliers, 6 attributes in 2 groups, judgments from 3 managers (Rodrigues et al., 2022).</p>
-    </div>
-    <div class="grid g3" id="supplierCards"></div>
-    <div class="grid g2">
-      <div class="card">
-        <h2>Paper's result vs rebuilt</h2>
-        <table class="data" id="reproTable"></table>
-        <p class="note">Rows marked <span class="pill ok">match</span> equal the paper to 4 decimals. ANP is reproduced by weighting the groups 1 : 5.</p>
-      </div>
-      <div class="card">
-        <h2>Decision tree</h2>
-        <div id="treeWrap" class="tree-wrap"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h2>Pairwise judgments (paper Tables 2&ndash;9)</h2>
-        <span class="note">Move a slider to change a judgment. CR = consistency ratio.</span>
-      </div>
-      <div id="matrixGrid" class="matrix-grid"></div>
-    </div>
-  </section>
+<div class="intro">
+  <div class="colhead paper">PAPER'S MODEL<small>Exactly as published: the paper's 8 answer tables, all six attributes scored from opinions</small></div>
+  <div class="colhead mine">MY MODEL<small>Same inputs, two changes: (1) one doubtful answer re-checked in each inconsistent table, (2) price, delivery time and quality scored from real numbers</small></div>
+</div>
 
-  <!-- SENSITIVITY -->
-  <section class="view" id="view-sensitivity" hidden>
-    <div class="view-head">
-      <h1>Sensitivity: when does the winner change?</h1>
-      <p>AHP and ANP differ only in the weight of the two groups. Move the weight and watch the winner.</p>
+<section>
+  <h2><span class="n">1</span> Input answers of the managers (paper Tables 2 to 9)</h2>
+  <p class="note">Change any answer on the left with the drop-down; the right side follows. On the right, a <span class="chg">green cell</span> is an answer that was re-checked (moved one step). CR = consistency ratio; Saaty's limit for a 3 × 3 table is 5%.</p>
+  <div class="cmp">
+    <div class="L"><div id="tabsL" class="tgrid"></div></div>
+    <div class="R"><div id="tabsR" class="tgrid"></div></div>
+  </div>
+  <div class="cmp">
+    <div class="L"><div class="sumline" id="crL"></div></div>
+    <div class="R"><div class="sumline" id="crR"></div></div>
+  </div>
+  <div class="cmp">
+    <div class="L">
+      <h3>Proof: working of one table</h3>
+      <select class="pick" data-side="L"></select>
+      <div id="workL"></div>
     </div>
-    <div class="card slider-card">
-      <label for="wSlider" class="lbl">Weight of <b>Logistic-Economic</b> (rest goes to Quality-Sustainability)</label>
-      <div class="slider-row">
-        <input type="range" id="wSlider" min="0" max="1" step="0.01" value="0.5">
-        <span class="num big" id="wRead">0.50</span>
-      </div>
-      <div class="presets">
-        <button class="chip" type="button" data-w="0.5">Paper AHP (0.50)</button>
-        <button class="chip" type="button" data-w="0.1667">Paper ANP (0.17)</button>
-      </div>
+    <div class="R">
+      <h3>Proof: working of the same table</h3>
+      <select class="pick" data-side="R"></select>
+      <div id="workR"></div>
     </div>
-    <div class="grid g31">
-      <div class="card">
-        <h2>Final score vs weight</h2>
-        <div class="chart-box h360"><canvas id="lineChart"></canvas></div>
-      </div>
-      <div class="stack" id="whatifTiles"></div>
-    </div>
-    <div class="card">
-      <h2>Weight change needed to flip the winner (one attribute at a time)</h2>
-      <table class="data" id="sensTable"></table>
-    </div>
-  </section>
+  </div>
+</section>
 
-  <!-- REAL NUMBERS -->
-  <section class="view" id="view-data" hidden>
-    <div class="view-head">
-      <h1>Real numbers instead of opinions</h1>
-      <p>Price, delivery time and defect rate are measured, so they are scored as 1 / value. Values are inside the paper's ranges and can be edited.</p>
+<section>
+  <h2><span class="n">2</span> Score of each supplier on each attribute</h2>
+  <p class="note">Weights of the attributes inside each group come from Tables 2 and 3. The three suppliers' scores on each attribute come from Tables 4 to 9 (opinions) or, on the right, from measured values where they exist.</p>
+  <div class="cmp">
+    <div class="L"><div id="scoresL"></div></div>
+    <div class="R">
+      <div id="scoresR"></div>
+      <h3>Measured values used (lower is better)</h3>
+      <table class="data" id="measTable"></table>
+      <p class="note">Score = (1/x) ÷ Σ(1/x), so the real ratio is kept. Quality uses the bad-part rate, because the cost of poor quality comes from the bad parts (S3 sends 2.25 times as many as S1). The paper gives only ranges; values per supplier are placed inside the paper's range following its ranking (estimate). You can type real company values.</p>
     </div>
-    <div class="card">
-      <table class="data" id="measuredTable"></table>
-    </div>
-    <div class="grid g2">
-      <div class="card">
-        <h2>Attribute scores: opinions vs real numbers</h2>
-        <div class="chart-box h340"><canvas id="compareChart"></canvas></div>
-      </div>
-      <div class="card">
-        <h2>Final score at the chosen weight</h2>
-        <div class="chart-box h340"><canvas id="finalCompareChart"></canvas></div>
-      </div>
-    </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ROBUSTNESS -->
-  <section class="view" id="view-robust" hidden>
-    <div class="view-head">
-      <h1>Robustness: how sure is the answer?</h1>
-      <p>Each trial moves every judgment by up to one scale step and picks a random group weight. The winner is counted.</p>
-    </div>
-    <div class="card controls-row">
-      <div>
-        <label class="lbl" for="mcSteps">Judgment uncertainty</label>
-        <select id="mcSteps"><option value="0">None</option><option value="1" selected>&plusmn;1 step</option><option value="2">&plusmn;2 steps</option></select>
-      </div>
-      <div>
-        <label class="lbl" for="mcRange">Logistic-Economic weight</label>
-        <select id="mcRange">
-          <option value="0.1,0.9" selected>0.1 to 0.9</option>
-          <option value="0.3,0.7">0.3 to 0.7</option>
-          <option value="0.1,0.3">0.1 to 0.3 (quality first)</option>
-          <option value="0.6,0.9">0.6 to 0.9 (logistics first)</option>
-        </select>
-      </div>
-      <div>
-        <label class="lbl" for="mcRuns">Trials</label>
-        <select id="mcRuns"><option value="1000">1,000</option><option value="5000" selected>5,000</option><option value="10000">10,000</option></select>
-      </div>
-      <div class="align-end"><button class="btn" type="button" id="mcRun">Run</button></div>
-    </div>
-    <div class="grid g2">
-      <div class="card">
-        <h2>Share of trials won</h2>
-        <div id="mcVerdict" class="verdict-line"></div>
-        <div class="chart-box h240"><canvas id="mcWinChart"></canvas></div>
-        <table class="data compact" id="mcRankTable"></table>
-      </div>
-      <div class="card">
-        <h2>Supplier 1 score minus Supplier 2 score</h2>
-        <div class="chart-box h380"><canvas id="mcHistChart"></canvas></div>
-      </div>
-    </div>
-  </section>
+<section>
+  <h2><span class="n">3</span> Final score = Σ (global weight × score)</h2>
+  <p class="note">Global weight = group weight (w or 1 − w) × weight inside the group. Every product is shown; the last row adds each column.</p>
+  <div class="cmp">
+    <div class="L"><div id="finalL"></div></div>
+    <div class="R"><div id="finalR"></div></div>
+  </div>
+</section>
 
-  <!-- OUTLOOK -->
-  <section class="view" id="view-outlook" hidden>
-    <div class="view-head">
-      <h1>If two suppliers are close: what will it cost?</h1>
-      <p>Pick what matters, then compare the 24-month cost of each buying plan.</p>
+<section>
+  <h2><span class="n">4</span> Flip point: the weight w at which the winner changes</h2>
+  <p class="note">Each final score is a straight line in w. w* = [S1(0) − S2(0)] ÷ ([S1(0) − S2(0)] − [S1(1) − S2(1)]).</p>
+  <div class="cmp">
+    <div class="L"><div id="flipL"></div><div class="chartbox"><canvas id="chartFlipL"></canvas></div></div>
+    <div class="R"><div id="flipR"></div><div class="chartbox"><canvas id="chartFlipR"></canvas></div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">5</span> How sure is the winner? (random trials)</h2>
+  <div class="controls">
+    <label>Trials <input id="mcRuns" type="number" value="5000" min="100" max="20000" step="100"></label>
+    <button id="runMC">Run again</button>
+    <span class="note">Each trial: every answer moves by −1, 0 or +1 step, w is random between 0.1 and 0.9 (right side: measured values also vary ±5%). Fixed seed, so the result repeats exactly.</span>
+  </div>
+  <div class="cmp">
+    <div class="L"><div id="mcL"></div><div class="chartbox small"><canvas id="chartMCL"></canvas></div></div>
+    <div class="R"><div id="mcR"></div><div class="chartbox small"><canvas id="chartMCR"></canvas></div></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">6</span> Two-year cost of each buying plan</h2>
+  <div class="cmp">
+    <div class="L"><div class="absent">Not in the paper.<br>The paper gives only a ranking and says nothing about money: buying cost, bad rods or line stops.</div></div>
+    <div class="R">
+      <div id="costR"></div>
+      <div class="chartbox"><canvas id="chartCost"></canvas></div>
+      <h3>Inputs (editable)</h3>
+      <table class="data" id="planTable"></table>
     </div>
-    <div class="grid g2">
-      <div class="card">
-        <h2>Company priority</h2>
-        <div class="prio-sliders">
-          <div><label class="lbl" for="pCost">Cost</label><input type="range" id="pCost" min="0" max="10" step="1" value="4"><span class="num" id="pCostV">4</span></div>
-          <div><label class="lbl" for="pQual">Quality</label><input type="range" id="pQual" min="0" max="10" step="1" value="4"><span class="num" id="pQualV">4</span></div>
-          <div><label class="lbl" for="pSpeed">Speed</label><input type="range" id="pSpeed" min="0" max="10" step="1" value="4"><span class="num" id="pSpeedV">4</span></div>
-        </div>
-        <div class="presets">
-          <button class="chip" type="button" data-p="4,4,4">Balanced</button>
-          <button class="chip" type="button" data-p="8,2,3">Cost first</button>
-          <button class="chip" type="button" data-p="2,8,2">Quality first</button>
-          <button class="chip" type="button" data-p="2,3,8">Speed first</button>
-        </div>
-        <div id="prioResult" class="stack" style="margin-top:14px"></div>
-      </div>
-      <div class="card">
-        <h2>Tipping points (24 months)</h2>
-        <div id="breakEven" class="stack"></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-head">
-        <h2>Total cost of each plan, month by month</h2>
-        <div class="field-inline">
-          <label class="lbl" for="splitSlider">Split plan: share from S1</label>
-          <input type="range" id="splitSlider" min="0" max="100" step="5" value="50">
-          <span class="num" id="splitRead">50%</span>
-        </div>
-      </div>
-      <div class="grid g31">
-        <div class="chart-box h380"><canvas id="outlookChart"></canvas></div>
-        <div id="outlookTiles" class="stack"></div>
-      </div>
-    </div>
-    <details class="card">
-      <summary><h2 style="display:inline">Planning assumptions</h2> <span class="note">(editable)</span></summary>
-      <div class="plan-grid" id="planGrid"></div>
-      <button class="btn ghost small-btn" type="button" id="resetPlan">Reset assumptions</button>
-    </details>
-  </section>
+  </div>
+</section>
+
+<section class="verdict">
+  <h2><span class="n">✓</span> Why my model is better</h2>
+  <div id="verdict"></div>
+</section>
 
 </main>
 
-<footer class="foot">Source paper: Rodrigues, &Scaron;&iacute;rov&aacute; &amp; Mugurusi (2022), IFAC PapersOnLine 55-10, 2773&ndash;2778. Seminar ME496, IIITDM Kurnool.</footer>
+<footer>Source paper: Rodrigues, M., Šírová, E., Mugurusi, G. (2022). IFAC PapersOnLine 55(10), pp. 2773-2778. https://doi.org/10.1016/j.ifacol.2022.10.149</footer>
 
 <script src="assets/vendor/chart.umd.js"></script>
 <script src="js/data.js"></script>
